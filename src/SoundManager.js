@@ -5,7 +5,7 @@ class SoundManager {
   constructor() {
     this.sounds = {};
     this.enabled = true;
-    this.volume = 0.7;
+    this.volume = 0.35;
     
     // 音声ファイルのマッピング
     // public/sounds/ に以下のファイル名で配置してください
