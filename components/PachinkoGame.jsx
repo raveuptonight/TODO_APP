@@ -1,25 +1,33 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import soundManager from './SoundManager';
+'use client';
 
-export default function App() {
-  const [todos, setTodos] = useState([
-    { id: 1, text: 'サンプルタスク1', completed: false },
-    { id: 2, text: 'サンプルタスク2', completed: false },
-    { id: 3, text: 'サンプルタスク3', completed: false },
-  ]);
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSession, signOut } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+
+// SoundManagerをクライアントサイドのみでインポート
+let soundManager = null;
+if (typeof window !== 'undefined') {
+  import('@/lib/SoundManager').then(mod => {
+    soundManager = mod.default;
+  });
+}
+
+export default function PachinkoGame() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+
+  const [todos, setTodos] = useState([]);
   const [newTodo, setNewTodo] = useState('');
   const [isSpinning, setIsSpinning] = useState(false);
   const [reels, setReels] = useState(['？', '？', '？']);
   const [result, setResult] = useState(null);
 
-  // パチンコ要素
   const [holds, setHolds] = useState([]);
   const [currentStage, setCurrentStage] = useState('normal');
   const [isKakuhen, setIsKakuhen] = useState(false);
   const [kakuhenCount, setKakuhenCount] = useState(0);
   const [continuationRate, setContinuationRate] = useState(0);
 
-  // 演出状態
   const [showFlash, setShowFlash] = useState(false);
   const [flashColor, setFlashColor] = useState('white');
   const [shake, setShake] = useState(false);
@@ -30,7 +38,6 @@ export default function App() {
   const [reachType, setReachType] = useState(null);
   const [showYakumono, setShowYakumono] = useState(false);
 
-  // ポイント
   const [totalPoints, setTotalPoints] = useState(0);
   const [showPointGain, setShowPointGain] = useState(null);
 
@@ -42,19 +49,74 @@ export default function App() {
   const bgmRef = useRef(null);
   const spinBgmRef = useRef(null);
 
-  // 初期化
+  // 認証チェック
   useEffect(() => {
-    soundManager.preload().then(() => {
-      setSoundLoaded(true);
-    });
+    if (status === 'unauthenticated') {
+      router.push('/login');
+    }
+  }, [status, router]);
+
+  // サウンド初期化
+  useEffect(() => {
+    if (soundManager) {
+      soundManager.preload().then(() => setSoundLoaded(true));
+    }
   }, []);
 
   useEffect(() => {
-    soundManager.setEnabled(soundEnabled);
+    if (soundManager) soundManager.setEnabled(soundEnabled);
   }, [soundEnabled]);
 
+  // TODO読み込み
+  useEffect(() => {
+    if (session?.user?.id) {
+      fetchTodos();
+      fetchUserPoints();
+    }
+  }, [session?.user?.id]);
+
+  const fetchTodos = async () => {
+    try {
+      const res = await fetch('/api/todos');
+      const data = await res.json();
+      if (data.todos) {
+        setTodos(data.todos.map(t => ({
+          id: t.id,
+          text: t.text,
+          completed: t.completed
+        })));
+      }
+    } catch (err) {
+      console.error('Failed to fetch todos:', err);
+    }
+  };
+
+  const fetchUserPoints = async () => {
+    try {
+      const res = await fetch('/api/user/points');
+      const data = await res.json();
+      if (data.totalPoints !== undefined) {
+        setTotalPoints(data.totalPoints);
+      }
+    } catch (err) {
+      console.error('Failed to fetch points:', err);
+    }
+  };
+
+  const savePoints = async (points, combo = 0) => {
+    try {
+      await fetch('/api/user/points', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ points, combo }),
+      });
+    } catch (err) {
+      console.error('Failed to save points:', err);
+    }
+  };
+
   const playSound = useCallback((soundKey, options) => {
-    soundManager.play(soundKey, options);
+    if (soundManager) soundManager.play(soundKey, options);
   }, []);
 
   const triggerFlash = (color = 'white', times = 1, interval = 100) => {
@@ -65,9 +127,7 @@ export default function App() {
       setTimeout(() => {
         setShowFlash(false);
         count++;
-        if (count < times) {
-          setTimeout(flash, interval);
-        }
+        if (count < times) setTimeout(flash, interval);
       }, 80);
     };
     flash();
@@ -83,7 +143,6 @@ export default function App() {
     setTimeout(() => setAnnouncement(null), duration);
   };
 
-  // 保留追加
   const addHold = (todoId) => {
     if (holds.length >= 4) return false;
 
@@ -134,7 +193,6 @@ export default function App() {
 
       const holdColor = currentHold.color;
 
-      // 先読み予告
       if (holdColor === 'gold' || holdColor === 'rainbow') {
         if (Math.random() > 0.5) {
           playSound('impact');
@@ -144,7 +202,6 @@ export default function App() {
         }
       }
 
-      // 激アツ予告
       const gekiatsuChance = holdColor === 'rainbow' ? 0.8 :
                              holdColor === 'gold' ? 0.5 :
                              holdColor === 'red' ? 0.3 : 0.1;
@@ -156,13 +213,11 @@ export default function App() {
         await new Promise(r => setTimeout(r, 1500));
       }
 
-      // デジタル回転
       const spinDuration = 1800;
       const spinInterval = 70;
       let elapsed = 0;
 
-      // スピンBGM開始
-      spinBgmRef.current = soundManager.playBgm('spinBgm');
+      if (soundManager) spinBgmRef.current = soundManager.playBgm('spinBgm');
 
       await new Promise(resolve => {
         const timer = setInterval(() => {
@@ -179,7 +234,6 @@ export default function App() {
         }, spinInterval);
       });
 
-      // 当たり判定
       const hitRate = isKakuhen ? 0.65 :
                       holdColor === 'rainbow' ? 0.85 :
                       holdColor === 'gold' ? 0.5 :
@@ -214,8 +268,7 @@ export default function App() {
         }
       }
 
-      // 図柄停止 - スピンBGM停止
-      soundManager.stopBgm(spinBgmRef.current);
+      if (soundManager) soundManager.stopBgm(spinBgmRef.current);
       spinBgmRef.current = null;
 
       setReels([finalReels[0], '？', '？']);
@@ -223,7 +276,6 @@ export default function App() {
 
       setReels([finalReels[0], finalReels[1], '？']);
 
-      // リーチ判定
       if (finalReels[0] === finalReels[1]) {
         triggerFlash('yellow', 3);
         playSound('reach');
@@ -231,7 +283,6 @@ export default function App() {
         showAnnouncementText('リーチ!!', 'reach');
         await new Promise(r => setTimeout(r, 1500));
 
-        // SPリーチ発展
         const spRate = holdColor === 'rainbow' ? 0.9 :
                        holdColor === 'gold' ? 0.6 :
                        holdColor === 'red' ? 0.4 : 0.2;
@@ -244,7 +295,6 @@ export default function App() {
           triggerFlash('purple', 5, 80);
           await new Promise(r => setTimeout(r, 2000));
 
-          // 役物演出
           if (Math.random() > 0.4) {
             setShowYakumono(true);
             playSound('yakumono');
@@ -254,12 +304,10 @@ export default function App() {
             setShowYakumono(false);
           }
 
-          // SPリーチBGM
-          bgmRef.current = soundManager.playBgm('spReachBgm');
+          if (soundManager) bgmRef.current = soundManager.playBgm('spReachBgm');
           await new Promise(r => setTimeout(r, 2500));
-          soundManager.stopBgm(bgmRef.current);
+          if (soundManager) soundManager.stopBgm(bgmRef.current);
 
-          // ボタン演出
           const buttonRand = Math.random();
           if (buttonRand < 0.3) {
             setButtonType('deka');
@@ -280,12 +328,10 @@ export default function App() {
           await new Promise(r => setTimeout(r, 500));
         }
 
-        // キセル演出
         if (isHit && Math.random() > 0.5) {
           const fakeSymbol = symbols.filter(s => s !== finalReels[0])[0];
           setReels([finalReels[0], finalReels[1], fakeSymbol]);
           await new Promise(r => setTimeout(r, 800));
-
           triggerFlash('cyan', 2);
           showAnnouncementText('滑り!!', 'kiseru');
           await new Promise(r => setTimeout(r, 600));
@@ -294,11 +340,9 @@ export default function App() {
         await new Promise(r => setTimeout(r, 400));
       }
 
-      // 最終停止
       setReels(finalReels);
       setReachType(null);
 
-      // 結果判定
       if (finalReels[0] === finalReels[1] && finalReels[1] === finalReels[2]) {
         const isConfirm = finalReels[0] === '7' || finalReels[0] === 'V';
 
@@ -319,13 +363,11 @@ export default function App() {
         await new Promise(r => setTimeout(r, 3500));
         setShowRainbow(false);
 
-        // V入賞
         playSound('vEntry');
         showAnnouncementText('V入賞!!', 'v');
         triggerFlash('cyan', 3);
         await new Promise(r => setTimeout(r, 1500));
 
-        // ラウンド消化
         let roundPoints = 0;
         for (let round = 1; round <= 10; round++) {
           playSound('roundStart');
@@ -340,10 +382,13 @@ export default function App() {
           await new Promise(r => setTimeout(r, 300));
         }
 
-        setShowPointGain(roundPoints + points);
+        const earnedPoints = roundPoints + points;
+        setShowPointGain(earnedPoints);
         setTimeout(() => setShowPointGain(null), 2000);
 
-        // 確変突入判定
+        // ポイントを保存
+        savePoints(earnedPoints, kakuhenCount + 1);
+
         if (isConfirm || Math.random() > 0.35) {
           setIsKakuhen(true);
           setKakuhenCount(prev => prev + 1);
@@ -363,14 +408,24 @@ export default function App() {
 
         setResult('OOATARI');
 
-        setTodos(prev => prev.map(t =>
-          t.id === currentHold.todoId ? { ...t, completed: true } : t
-        ));
+        // タスクを完了に
+        const todoToComplete = todos.find(t => t.id === currentHold.todoId);
+        if (todoToComplete) {
+          await fetch('/api/todos', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: currentHold.todoId, completed: true }),
+          });
+          setTodos(prev => prev.map(t =>
+            t.id === currentHold.todoId ? { ...t, completed: true } : t
+          ));
+        }
       } else {
         setResult('HAZURE');
         setTotalPoints(prev => prev + points);
         setShowPointGain(points);
         setTimeout(() => setShowPointGain(null), 1500);
+        savePoints(points);
 
         if (isKakuhen && Math.random() > (continuationRate / 100)) {
           setIsKakuhen(false);
@@ -384,44 +439,63 @@ export default function App() {
     };
 
     setTimeout(processHold, 600);
-  }, [holds, isSpinning, isKakuhen, continuationRate, playSound, todos]);
+  }, [holds, isSpinning, isKakuhen, continuationRate, playSound, todos, kakuhenCount]);
 
   const handleTodoClick = (todo) => {
     if (todo.completed || holds.length >= 4) return;
     addHold(todo.id);
   };
 
-  const addTodo = () => {
+  const addTodo = async () => {
     if (!newTodo.trim()) return;
-    setTodos([...todos, { id: Date.now(), text: newTodo, completed: false }]);
-    setNewTodo('');
+
+    try {
+      const res = await fetch('/api/todos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: newTodo.trim() }),
+      });
+      const data = await res.json();
+      if (data.todo) {
+        setTodos(prev => [{ id: data.todo.id, text: data.todo.text, completed: false }, ...prev]);
+      }
+      setNewTodo('');
+    } catch (err) {
+      console.error('Failed to add todo:', err);
+    }
   };
 
-  const resetGame = () => {
-    setTodos(todos.map(t => ({ ...t, completed: false })));
+  const resetGame = async () => {
+    // 完了タスクを削除
+    for (const todo of todos.filter(t => t.completed)) {
+      await fetch(`/api/todos?id=${todo.id}`, { method: 'DELETE' });
+    }
+    setTodos(todos.filter(t => !t.completed));
     setHolds([]);
     setIsKakuhen(false);
     setKakuhenCount(0);
     setContinuationRate(0);
     setCurrentStage('normal');
-    setTotalPoints(0);
   };
 
   const getHoldBallStyle = (color) => {
     const baseStyle = "w-10 h-10 rounded-full hold-ball transition-all duration-300";
     switch(color) {
-      case 'green':
-        return `${baseStyle} bg-gradient-to-br from-green-300 via-green-500 to-green-700`;
-      case 'red':
-        return `${baseStyle} bg-gradient-to-br from-red-300 via-red-500 to-red-700`;
-      case 'gold':
-        return `${baseStyle} bg-gradient-to-br from-yellow-200 via-yellow-400 to-yellow-600 animate-glow-gold`;
-      case 'rainbow':
-        return `${baseStyle} animate-rainbow`;
-      default:
-        return `${baseStyle} bg-gradient-to-br from-blue-300 via-blue-500 to-blue-700`;
+      case 'green': return `${baseStyle} bg-gradient-to-br from-green-300 via-green-500 to-green-700`;
+      case 'red': return `${baseStyle} bg-gradient-to-br from-red-300 via-red-500 to-red-700`;
+      case 'gold': return `${baseStyle} bg-gradient-to-br from-yellow-200 via-yellow-400 to-yellow-600 animate-glow-gold`;
+      case 'rainbow': return `${baseStyle} animate-rainbow`;
+      default: return `${baseStyle} bg-gradient-to-br from-blue-300 via-blue-500 to-blue-700`;
     }
   };
+
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen normal-bg flex items-center justify-center">
+        <div className="text-cyan-400 text-xl animate-pulse">Loading...</div>
+      </div>
+    );
+  }
 
   const incompleteTodos = todos.filter(t => !t.completed);
   const completedTodos = todos.filter(t => t.completed);
@@ -432,36 +506,15 @@ export default function App() {
       currentStage === 'chance' ? 'chance-bg' : 'normal-bg'
     } ${shake ? 'animate-shake' : ''}`}>
 
-      {/* Ambient particles */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        {[...Array(20)].map((_, i) => (
-          <div
-            key={i}
-            className="absolute w-1 h-1 bg-cyan-400/30 rounded-full"
-            style={{
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              animation: `float ${3 + Math.random() * 4}s ease-in-out infinite`,
-              animationDelay: `${Math.random() * 2}s`,
-            }}
-          />
-        ))}
-      </div>
-
-      {/* Flash overlay */}
       {showFlash && (
-        <div
-          className="fixed inset-0 z-50 pointer-events-none transition-opacity"
-          style={{ backgroundColor: flashColor, opacity: 0.85 }}
-        />
+        <div className="fixed inset-0 z-50 pointer-events-none transition-opacity"
+          style={{ backgroundColor: flashColor, opacity: 0.85 }} />
       )}
 
-      {/* Rainbow overlay */}
       {showRainbow && (
         <div className="fixed inset-0 z-40 pointer-events-none opacity-40 animate-rainbow" />
       )}
 
-      {/* Announcement */}
       {announcement && (
         <div className={`fixed top-1/3 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50
           text-3xl md:text-5xl font-black text-center px-8 py-5 rounded-2xl whitespace-nowrap
@@ -480,16 +533,11 @@ export default function App() {
           ${announcement.type === 'round' ? 'text-white bg-orange-600/90 border-orange-400 text-2xl' : ''}
           ${announcement.type === 'rate' ? 'text-yellow-300 bg-purple-800/90 border-yellow-400 text-2xl' : ''}
           ${announcement.type === 'normal' || announcement.type === 'end' ? 'text-gray-300 bg-gray-800/80 border-gray-500 text-2xl' : ''}`}
-          style={{
-            textShadow: '0 0 30px currentColor, 0 0 60px currentColor',
-            boxShadow: '0 0 40px rgba(0, 212, 255, 0.3), inset 0 0 60px rgba(255, 255, 255, 0.1)'
-          }}
-        >
+          style={{ textShadow: '0 0 30px currentColor, 0 0 60px currentColor' }}>
           {announcement.text}
         </div>
       )}
 
-      {/* ボタン演出 */}
       {showButton && (
         <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-45">
           <div className={`rounded-full flex items-center justify-center font-black text-white cursor-pointer
@@ -497,18 +545,13 @@ export default function App() {
             ${buttonType === 'deka' ? 'w-44 h-44 text-3xl bg-gradient-to-br from-red-400 via-red-600 to-red-800 animate-pulse' :
               buttonType === 'renda' ? 'w-36 h-36 text-xl bg-gradient-to-br from-yellow-400 via-orange-500 to-red-600 animate-bounce' :
               'w-28 h-28 text-lg bg-gradient-to-br from-blue-400 via-blue-600 to-blue-800'}`}
-            style={{
-              boxShadow: '0 0 60px rgba(255,255,255,0.5), inset 0 -8px 20px rgba(0,0,0,0.4), inset 0 8px 20px rgba(255,255,255,0.3)',
-              textShadow: '0 2px 4px rgba(0,0,0,0.5)'
-            }}
-            onClick={() => playSound('swordPush')}
-          >
+            style={{ boxShadow: '0 0 60px rgba(255,255,255,0.5)' }}
+            onClick={() => playSound('swordPush')}>
             {buttonType === 'renda' ? '連打!!' : 'PUSH'}
           </div>
         </div>
       )}
 
-      {/* 役物 */}
       {showYakumono && (
         <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-30 animate-bounce">
           <div className="text-8xl" style={{ filter: 'drop-shadow(0 0 20px rgba(255, 200, 0, 0.8))' }}>⚔️</div>
@@ -517,16 +560,23 @@ export default function App() {
 
       {/* Header */}
       <div className="text-center mb-6 relative z-10">
+        <div className="flex justify-between items-center max-w-lg mx-auto mb-4">
+          <div className="text-gray-500 text-xs">
+            {session?.user?.name || session?.user?.email}
+          </div>
+          <button
+            onClick={() => signOut()}
+            className="text-gray-500 text-xs hover:text-white transition-colors"
+          >
+            LOGOUT
+          </button>
+        </div>
+
         <h1 className={`text-2xl md:text-4xl font-black mb-3 tracking-wider ${
           currentStage === 'fever' ? 'text-pink-300' :
           currentStage === 'chance' ? 'text-cyan-300' : 'text-blue-300'
         } ${currentStage === 'fever' ? 'animate-neon' : ''}`}
-          style={{
-            textShadow: currentStage === 'fever'
-              ? '0 0 20px #ff00ff, 0 0 40px #ff00ff, 0 0 60px #ff00ff'
-              : '0 0 20px currentColor, 0 0 40px currentColor'
-          }}
-        >
+          style={{ textShadow: '0 0 20px currentColor, 0 0 40px currentColor' }}>
           {currentStage === 'fever' ? `🔥 確変 ${kakuhenCount}連継続中 🔥` :
            currentStage === 'chance' ? '⚡ CHANCE ZONE ⚡' :
            '🎰 PACHINKO TODO 🎰'}
@@ -555,18 +605,10 @@ export default function App() {
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
             className={`px-5 py-2.5 rounded-xl transition-all duration-300 font-bold tracking-wider ${
-              soundEnabled
-                ? 'glass-dark neon-border text-cyan-300'
-                : 'bg-gray-800/50 text-gray-500 border border-gray-700'
-            }`}
-          >
+              soundEnabled ? 'glass-dark neon-border text-cyan-300' : 'bg-gray-800/50 text-gray-500 border border-gray-700'
+            }`}>
             {soundEnabled ? '🔊 ON' : '🔇 OFF'}
           </button>
-          {!soundLoaded && (
-            <div className="px-5 py-2.5 rounded-xl glass-dark text-yellow-300 animate-pulse">
-              Loading...
-            </div>
-          )}
         </div>
       </div>
 
@@ -575,75 +617,46 @@ export default function App() {
         <span className="text-gray-500 text-sm tracking-widest font-bold">HOLD</span>
         <div className="flex gap-3 glass-dark px-4 py-3 rounded-2xl">
           {[0, 1, 2, 3].map(i => (
-            <div
-              key={i}
-              className={holds[i]
-                ? `${getHoldBallStyle(holds[i].color)} active`
-                : 'w-10 h-10 rounded-full bg-gray-800/80 border-2 border-gray-700'
-              }
-            />
+            <div key={i}
+              className={holds[i] ? `${getHoldBallStyle(holds[i].color)} active` :
+                'w-10 h-10 rounded-full bg-gray-800/80 border-2 border-gray-700'} />
           ))}
         </div>
       </div>
 
       {/* スロットマシン */}
       <div className={`max-w-lg mx-auto mb-8 transition-all duration-500 ${reachType === 'sp' ? 'scale-105' : ''}`}>
-        {/* 筐体外枠 */}
         <div className="relative p-1 rounded-3xl"
           style={{
             background: 'linear-gradient(180deg, #ffd700 0%, #b8860b 50%, #8b6914 100%)',
-            boxShadow: currentStage === 'fever'
-              ? '0 0 60px rgba(255, 0, 255, 0.6), 0 0 100px rgba(255, 0, 255, 0.3)'
-              : reachType
-              ? '0 0 50px rgba(255, 215, 0, 0.5), 0 0 100px rgba(255, 215, 0, 0.2)'
-              : '0 0 30px rgba(0, 212, 255, 0.3), 0 0 60px rgba(0, 0, 0, 0.5)'
-          }}
-        >
-          {/* 筐体内側 */}
+            boxShadow: currentStage === 'fever' ? '0 0 60px rgba(255, 0, 255, 0.6)' :
+              reachType ? '0 0 50px rgba(255, 215, 0, 0.5)' : '0 0 30px rgba(0, 212, 255, 0.3)'
+          }}>
           <div className="bg-gradient-to-b from-gray-900 via-gray-950 to-black p-5 rounded-[22px] relative overflow-hidden">
-            {/* スキャンライン効果 */}
             <div className="absolute inset-0 scanlines pointer-events-none opacity-30" />
 
-            {/* ステージ表示 */}
             <div className={`text-center text-xs tracking-[0.3em] font-bold mb-4 py-1 rounded-full ${
               currentStage === 'fever' ? 'bg-pink-900/50 text-pink-400' :
-              currentStage === 'chance' ? 'bg-cyan-900/50 text-cyan-400' :
-              'bg-gray-800/50 text-gray-500'
+              currentStage === 'chance' ? 'bg-cyan-900/50 text-cyan-400' : 'bg-gray-800/50 text-gray-500'
             }`}>
               {currentStage === 'fever' ? 'FEVER MODE' : currentStage === 'chance' ? 'CHANCE ZONE' : 'NORMAL'}
             </div>
 
-            {/* リール */}
             <div className="flex justify-center gap-3 mb-4">
               {reels.map((symbol, index) => (
-                <div
-                  key={index}
-                  className="relative"
-                >
-                  {/* リール枠 */}
-                  <div className={`w-24 h-28 rounded-xl flex items-center justify-center
-                    text-5xl font-black transition-all duration-200 slot-reel
-                    ${reachType && index < 2 && reels[0] === reels[1] ? 'neon-border-gold' : ''}`}
-                  >
+                <div key={index} className="relative">
+                  <div className={`w-24 h-28 rounded-xl flex items-center justify-center text-5xl font-black slot-reel
+                    ${reachType && index < 2 && reels[0] === reels[1] ? 'neon-border-gold' : ''}`}>
                     <span className={`relative z-10 ${
-                      symbol === '7' ? 'text-red-500' :
-                      symbol === 'V' ? 'text-purple-400' :
-                      symbol === '👑' ? '' :
-                      'text-yellow-400'
+                      symbol === '7' ? 'text-red-500' : symbol === 'V' ? 'text-purple-400' : 'text-yellow-400'
                     }`}
                       style={{
-                        textShadow: symbol === '7'
-                          ? '0 0 20px #ff0000, 0 0 40px #ff0000'
-                          : symbol === 'V'
-                          ? '0 0 20px #a855f7, 0 0 40px #a855f7'
-                          : '0 0 15px currentColor',
+                        textShadow: symbol === '7' ? '0 0 20px #ff0000' : symbol === 'V' ? '0 0 20px #a855f7' : '0 0 15px currentColor',
                         filter: isSpinning ? 'blur(2px)' : 'none'
-                      }}
-                    >
+                      }}>
                       {symbol}
                     </span>
                   </div>
-                  {/* リール番号 */}
                   <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-gray-600 font-bold">
                     {index + 1}
                   </div>
@@ -651,23 +664,18 @@ export default function App() {
               ))}
             </div>
 
-            {/* リーチ表示 */}
             {reachType && (
               <div className={`text-center font-black mb-3 py-2 rounded-lg ${
-                reachType === 'sp'
-                  ? 'text-purple-400 bg-purple-900/50 text-xl tracking-widest animate-pulse'
-                  : 'text-yellow-400 bg-yellow-900/30 tracking-wider'
-              }`}
-                style={{ textShadow: '0 0 20px currentColor' }}
-              >
+                reachType === 'sp' ? 'text-purple-400 bg-purple-900/50 text-xl tracking-widest animate-pulse' :
+                'text-yellow-400 bg-yellow-900/30 tracking-wider'
+              }`} style={{ textShadow: '0 0 20px currentColor' }}>
                 {reachType === 'sp' ? '★ SP REACH ★' : '- REACH -'}
               </div>
             )}
 
-            {/* 大当たり表示 */}
             {result === 'OOATARI' && !isSpinning && (
               <div className="text-center text-2xl font-black text-yellow-400 animate-pulse py-2"
-                style={{ textShadow: '0 0 30px #ffd700, 0 0 60px #ffd700' }}>
+                style={{ textShadow: '0 0 30px #ffd700' }}>
                 🎊 大当たり!! 🎊
               </div>
             )}
@@ -689,12 +697,10 @@ export default function App() {
               focus:outline-none focus:ring-2 focus:ring-cyan-500/30
               placeholder-gray-500 transition-all duration-300"
           />
-          <button
-            onClick={addTodo}
+          <button onClick={addTodo}
             className="px-7 py-3.5 bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold
               rounded-xl hover:from-cyan-500 hover:to-blue-500 transition-all duration-300
-              active:scale-95 tracking-wider neon-border"
-          >
+              active:scale-95 tracking-wider neon-border">
             追加
           </button>
         </div>
@@ -705,32 +711,19 @@ export default function App() {
         {incompleteTodos.map((todo) => {
           const inHold = holds.some(h => h.todoId === todo.id);
           return (
-            <div
-              key={todo.id}
-              onClick={() => handleTodoClick(todo)}
+            <div key={todo.id} onClick={() => handleTodoClick(todo)}
               className={`task-card p-4 rounded-xl cursor-pointer glass-dark
                 ${inHold ? 'opacity-60 scale-[0.98] border-yellow-500/50' : 'border-cyan-500/20'}
-                ${holds.length >= 4 && !inHold ? 'opacity-50' : ''}
-                border hover:border-cyan-400/50`}
-            >
+                ${holds.length >= 4 && !inHold ? 'opacity-50' : ''} border hover:border-cyan-400/50`}>
               <div className="flex items-center gap-4">
                 <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all
-                  ${inHold
-                    ? 'border-yellow-400 bg-yellow-400/20 shadow-lg shadow-yellow-500/30'
-                    : 'border-cyan-500/50 hover:border-cyan-400'}`}
-                >
-                  {inHold
-                    ? <span className="text-yellow-400 text-xs font-bold">待</span>
-                    : <span className="text-cyan-500/50 text-sm">○</span>
-                  }
+                  ${inHold ? 'border-yellow-400 bg-yellow-400/20 shadow-lg shadow-yellow-500/30' : 'border-cyan-500/50'}`}>
+                  {inHold ? <span className="text-yellow-400 text-xs font-bold">待</span> : <span className="text-cyan-500/50 text-sm">○</span>}
                 </div>
                 <span className="text-white font-medium flex-1">{todo.text}</span>
                 <div className={`text-xs px-3 py-1 rounded-full ${
-                  inHold
-                    ? 'bg-yellow-500/20 text-yellow-400'
-                    : holds.length >= 4
-                    ? 'bg-red-500/20 text-red-400'
-                    : 'bg-cyan-500/10 text-cyan-500/70'
+                  inHold ? 'bg-yellow-500/20 text-yellow-400' :
+                  holds.length >= 4 ? 'bg-red-500/20 text-red-400' : 'bg-cyan-500/10 text-cyan-500/70'
                 }`}>
                   {inHold ? '保留中' : holds.length >= 4 ? 'MAX' : 'TAP'}
                 </div>
@@ -746,10 +739,7 @@ export default function App() {
               COMPLETED ({completedTodos.length})
             </div>
             {completedTodos.map((todo) => (
-              <div
-                key={todo.id}
-                className="p-3 rounded-xl bg-gray-900/30 border border-gray-800/50 mb-2"
-              >
+              <div key={todo.id} className="p-3 rounded-xl bg-gray-900/30 border border-gray-800/50 mb-2">
                 <div className="flex items-center gap-3">
                   <div className="w-6 h-6 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/30">
                     <span className="text-white text-xs">✓</span>
@@ -758,12 +748,10 @@ export default function App() {
                 </div>
               </div>
             ))}
-            <button
-              onClick={resetGame}
+            <button onClick={resetGame}
               className="w-full mt-4 py-3 text-gray-500 text-sm hover:text-white
                 transition-all duration-300 rounded-xl border border-gray-700/50
-                hover:border-gray-600 hover:bg-gray-800/30 tracking-widest font-bold"
-            >
+                hover:border-gray-600 hover:bg-gray-800/30 tracking-widest font-bold">
               RESET
             </button>
           </div>
@@ -777,9 +765,8 @@ export default function App() {
         )}
       </div>
 
-      {/* フッター */}
       <div className="text-center mt-10 text-gray-700 text-xs tracking-widest">
-        PACHINKO TODO v1.0
+        PACHINKO TODO v2.0
       </div>
     </div>
   );
