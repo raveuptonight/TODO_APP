@@ -40,6 +40,7 @@ class SoundManager {
       getTama: 'get_tama.mp3',                // GOD OF GARO 7500獲得音（短くカットして使用）
 
       // BGM
+      spinBgm: 'spin_bgm.mp3',                // スピン中BGM
       spReachBgm: 'sp_reach_bgm.mp4',         // CLIMAX BATTLE BGM
       feverBgm: 'fever_bgm.mp4',              // 鋼コレクションBGM
     };

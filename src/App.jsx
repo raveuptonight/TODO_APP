@@ -40,6 +40,7 @@ export default function App() {
   const symbols = ['7', '3', 'V', '⭐', '🔔', '👑', '💎'];
   const processingRef = useRef(false);
   const bgmRef = useRef(null);
+  const spinBgmRef = useRef(null);
 
   // 初期化
   useEffect(() => {
@@ -160,6 +161,9 @@ export default function App() {
       const spinInterval = 70;
       let elapsed = 0;
 
+      // スピンBGM開始
+      spinBgmRef.current = soundManager.playBgm('spinBgm');
+
       await new Promise(resolve => {
         const timer = setInterval(() => {
           setReels([
@@ -210,7 +214,10 @@ export default function App() {
         }
       }
 
-      // 図柄停止
+      // 図柄停止 - スピンBGM停止
+      soundManager.stopBgm(spinBgmRef.current);
+      spinBgmRef.current = null;
+
       setReels([finalReels[0], '？', '？']);
       await new Promise(r => setTimeout(r, 400));
 
